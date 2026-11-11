@@ -6,7 +6,7 @@ This flow bridges the gap between digital synthesis (Yosys) and analog simulatio
 
 ## 🚀 Key Features & Updates
 
-This toolchain builds upon Tim Edwards's Qflow original `spi2xspice.py`, introducing massive structural upgrades to achieve STA-level timing accuracy and robust mixed-signal integration:
+This toolchain builds upon [Tim Edwards's Qflow](https://github.com/RTimothyEdwards/qflow.git) original `spi2xspice.py`, introducing massive structural upgrades to achieve STA-level timing accuracy and robust mixed-signal integration:
 
 * **Topological Slew Propagation:** Abandons static input slew assumptions. The script builds a directed circuit graph, recursively propagates transition times from driving gates to driven gates, and handles combinational loop-breaking (e.g., ring oscillators) automatically.
 * **True 2D Bilinear Interpolation:** Replaces monolithic median plane-fitting. Delays and transition times are dynamically interpolated directly from Liberty (`.lib`) 2D lookup tables based on the exact arriving slew and extracted net capacitive load.
