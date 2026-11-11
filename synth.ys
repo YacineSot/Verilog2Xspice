@@ -1,0 +1,201 @@
+# synth.tcl — auto-discover PDK Liberty (tt default), infer RTL/top, skip testbenches
+
+# --- 1. Environment variables (PDK_ROOT / PDK must be set) ---
+if {![info exists ::env(PDK_ROOT)] || ![info exists ::env(PDK)]} {
+    error "PDK_ROOT and PDK environment variables must be set"
+}
+set pdk_root $::env(PDK_ROOT)
+set pdk      $::env(PDK)
+set out_dir $::env(OUT_DIR)
+if {![file isdirectory $out_dir]} {
+    file mkdir $out_dir
+}
+
+# --- 2. Choose RTL directory: $RTL_DIR if set, else cwd ---
+if {[info exists ::env(RTL_DIR)] && $::env(RTL_DIR) ne ""} {
+    set rtl_dir $::env(RTL_DIR)
+    puts "INFO: Using RTL_DIR = $rtl_dir"
+} else {
+    set rtl_dir "."
+    puts "INFO: RTL_DIR not set, using cwd: [pwd]"
+}
+if {![file isdirectory $rtl_dir]} {
+    error "RTL_DIR does not exist or is not a directory: $rtl_dir"
+}
+
+# --- 3. RTL selection ---
+if {[info exists ::env(RTL)] && $::env(RTL) ne ""} {
+    # Explicit RTL: use as-is (even if it looks like a testbench)
+    set rtl $::env(RTL)
+    puts "INFO: Using explicitly set RTL = $rtl"
+} else {
+    # Auto-discover, skipping any file whose name contains "_tb"
+    set candidates {}
+    foreach f [lsort [concat \
+        [glob -nocomplain -types f -directory $rtl_dir *.v] \
+        [glob -nocomplain -types f -directory $rtl_dir *.sv]]] {
+        if {[string match *_tb.* [file tail $f]]} {
+            puts "INFO: Skipping testbench: [file tail $f]"
+            continue
+        }
+        if {[string match *_synth.* [file tail $f]]} {
+            puts "INFO: Skipping synthesized file: [file tail $f]"
+            continue
+        }
+        lappend candidates $f
+    }
+    if {[llength $candidates] == 0} {
+        error "No non-testbench RTL file found in $rtl_dir (set \$RTL explicitly)"
+    }
+    if {[llength $candidates] > 1} {
+        puts "WARNING: Multiple RTL files found in $rtl_dir; using the first:"
+        foreach c $candidates { puts "         - $c" }
+        puts "         Set \$RTL explicitly to select a specific design."
+    }
+    set rtl [lindex $candidates 0]
+    puts "INFO: Auto-selected RTL = $rtl"
+}
+
+# --- 4. Top: use $TOP if set, else derive from RTL basename ---
+if {[info exists ::env(TOP)] && $::env(TOP) ne ""} {
+    set top $::env(TOP)
+} else {
+    set top [file rootname [file tail $rtl]]
+    puts "INFO: \$TOP not set, derived top module from file: $top"
+}
+
+# --- 6. Automatically discover .lib files, prefer tt corner ---
+# --- 6. Automatically discover .lib files, standard-cell libraries only ---
+set ref_dir "$pdk_root/$pdk/libs.ref"
+if {![file isdirectory $ref_dir]} {
+    error "libs.ref directory not found: $ref_dir"
+}
+
+# Standard-cell library name filters (covers Sky130/GF180's _sc_ and IHP's stdcell)
+proc is_stdcell_lib {name} {
+    if {[string match "*_sc_*" $name]} { return 1 }
+    if {[string match "*stdcell*" $name]} { return 1 }
+    return 0
+}
+
+# Extract voltage from filename and return a comparable number
+proc lib_voltage {path} {
+    set base [file tail $path]
+    # Sky130 / GF180: 1v80, 3v30, 5v00
+    if {[regexp {_(\d+)v(\d+)} $base -> major minor]} {
+        return [expr {$major + $minor / 100.0}]
+    }
+    # IHP: 1p20, 1p50
+    if {[regexp {_(\d+)p(\d+)} $base -> major minor]} {
+        return [expr {$major + $minor / 100.0}]
+    }
+    return 999.0  ;# Cannot extract voltage; place at the end
+}
+
+set stdcell_dir  ""
+
+set all_libs {}
+foreach libdir [glob -nocomplain -types d -directory $ref_dir *] {
+    set libname [file tail $libdir]
+    if {![is_stdcell_lib $libname]} {
+        puts "INFO: Skipping non-standard-cell library: $libname"
+        continue
+    }
+    set found [glob -nocomplain -types f -directory "$libdir/lib" *.lib]
+    set stdcell_dir $libdir
+    if {[llength $found] == 0} {
+        puts "WARNING: No .lib in $libdir/lib, skipping"
+        continue
+    }
+    set all_libs [concat $all_libs $found]
+}
+
+if {[llength $all_libs] == 0} {
+    error "No standard-cell .lib files found under $ref_dir"
+}
+set tt_libs      [lsearch -all -inline -glob $all_libs "*tt*"]
+set typical_libs [lsearch -all -inline -glob $all_libs "*typ*"]
+
+# Merge tt and typ, then sort by voltage and take the minimum
+set candidates [concat $tt_libs $typical_libs]
+
+if {[llength $candidates] > 0} {
+    set best_lib ""
+    set best_volt 999.0
+    foreach candidate $candidates {
+        set v [lib_voltage $candidate]
+        if {$v < $best_volt} {
+            set best_volt $v
+            set best_lib $candidate
+        }
+    }
+    set lib $best_lib
+    puts "INFO: Selected typical corner with lowest voltage: $lib (${best_volt}V)"
+} else {
+    set lib [lindex $all_libs end]
+    puts "WARNING: No tt/typical liberty found, using: $lib"
+}
+
+puts "INFO: PDK_ROOT = $pdk_root"
+puts "INFO: PDK      = $pdk"
+puts "INFO: Liberty  = $lib"
+puts "INFO: Top      = $top"
+puts "INFO: RTL      = $rtl"
+
+
+# --- 7. Yosys synthesis flow ---
+if {[string match *.sv $rtl]} {
+    yosys read_verilog -sv $rtl
+} else {
+    yosys read_verilog $rtl
+}
+
+
+# Read the blackbox file dynamically passed from the environment wrapper
+set blackbox_file [expr {[info exists ::env(BLACKBOX_FILE)] ? $::env(BLACKBOX_FILE) : "cells_blackbox.v"}]
+
+if {[file exists $blackbox_file]} {
+    puts "INFO: Loading SPICE port order blackbox: $blackbox_file"
+    yosys read_verilog -lib $blackbox_file
+} else {
+    puts "WARNING: $blackbox_file not found! SPICE output ports may be scrambled."
+}
+
+yosys hierarchy -check -top $top
+yosys proc
+yosys opt -noff
+yosys synth -top $top
+yosys dfflibmap -liberty $lib
+yosys abc -liberty $lib
+yosys clean
+
+# --- 8. Output: default Verilog gate-level; spice => gate-level SPICE ---
+set output_type [expr {[info exists ::env(OUTPUT_TYPE)] ? [string tolower $::env(OUTPUT_TYPE)] : "verilog"}]
+
+if {[string match "*spice*" $output_type]} {
+    # write_spice writes a gate-level SPICE netlist
+    set out [expr {[info exists ::env(OUT)] ? $::env(OUT) : "${top}_synth.spice"}]
+    puts "INFO: OUTPUT_TYPE = spice -> gate-level SPICE: $out"
+    yosys write_spice -top $top $out_dir/$out
+} 
+if {[string match "*verilog*" $output_type]} {
+    set out [expr {[info exists ::env(OUT)] ? $::env(OUT) : "${top}_synth.v"}]
+    puts "INFO: OUTPUT_TYPE = verilog -> gate-level Verilog: $out"
+    yosys write_verilog -noattr $out_dir/$out
+}
+
+# --- 9. Export variables for the Bash driver ---
+set vars_file "$out_dir/.yosys_vars"
+set fp [open $vars_file w]
+puts $fp "export YOSYS_TOP=$top"
+puts $fp "export YOSYS_LIBERTY=$lib"
+puts $fp "export YOSYS_PDK_ROOT=$pdk_root"
+puts $fp "export YOSYS_PDK=$pdk"
+puts $fp "export YOSYS_PDK_REF=$ref_dir"
+puts $fp "export YOSYS_STDCELL_DIR=$stdcell_dir"
+puts $fp "export YOSYS_LIBERTIES=\"$all_libs\""
+if {[info exists out]} {
+    puts $fp "export YOSYS_OUT=$out"
+}
+close $fp
+puts "INFO: Variables written to $vars_file"

@@ -1,0 +1,33 @@
+v {xschem version=3.4.BRC file_version=1.4}
+G {}
+K{type=primitive
+format="@name @pinlist @symname"
+template="name=X1"
+}
+L 4 -20 10 0 10 {}
+T {a_VDD} 5 5 0 0 0.2 0.2 {}
+B 5 -22.5 7 -17.5 13 {name=a_VDD dir=inout}
+L 4 -20 30 0 30 {}
+T {a_VSS} 5 25 0 0 0.2 0.2 {}
+B 5 -22.5 27 -17.5 33 {name=a_VSS dir=inout}
+L 4 -20 50 0 50 {}
+T {a_reset_n} 5 45 0 0 0.2 0.2 {}
+B 5 -22.5 47 -17.5 53 {name=a_reset_n dir=inout}
+L 4 -20 70 0 70 {}
+T {a_clk} 5 65 0 0 0.2 0.2 {}
+B 5 -22.5 67 -17.5 73 {name=a_clk dir=inout}
+L 4 -20 90 0 90 {}
+T {a_count.0} 5 85 0 0 0.2 0.2 {}
+B 5 -22.5 87 -17.5 93 {name=a_count.0 dir=inout}
+L 4 -20 110 0 110 {}
+T {a_count.1} 5 105 0 0 0.2 0.2 {}
+B 5 -22.5 107 -17.5 113 {name=a_count.1 dir=inout}
+L 4 -20 130 0 130 {}
+T {a_count.2} 5 125 0 0 0.2 0.2 {}
+B 5 -22.5 127 -17.5 133 {name=a_count.2 dir=inout}
+L 4 -20 150 0 150 {}
+T {a_count.3} 5 145 0 0 0.2 0.2 {}
+B 5 -22.5 147 -17.5 153 {name=a_count.3 dir=inout}
+P 4 5 100 0 0 0 0 160 100 160 100 0 {}
+T {@symname} 40 70 0 0 0.3 0.3 {}
+T {@name} 0 -15 0 0 0.2 0.2 {}
